@@ -62,7 +62,14 @@ class Database:
             payload,
         )
 
-    async def submit(self, user_id: int, draft: dict, manager_chat: int, accepted: str):
+    async def submit(
+        self,
+        user_id: int,
+        draft: dict,
+        manager_chat: int,
+        accepted: str,
+        webhook_payload: dict | None = None,
+    ):
         async with self.pool.acquire() as conn, conn.transaction():
             source = await conn.fetchval("SELECT source FROM users WHERE id=$1", user_id)
             inserted = await conn.fetchrow(
@@ -78,6 +85,15 @@ class Database:
                     "SELECT * FROM orders WHERE draft_id=$1", UUID(draft["draft_id"])
                 )
             order_id = inserted["id"]
+            if webhook_payload is not None:
+                webhook_payload["order_id"] = order_id
+                webhook_payload["source"] = source
+                await self.enqueue(
+                    conn,
+                    f"n8n:{order_id}",
+                    manager_chat,
+                    {"kind": "webhook", "order_id": order_id, "lead": webhook_payload},
+                )
             await self.enqueue(
                 conn, f"order:{order_id}", manager_chat, {"kind": "order", "order_id": order_id}
             )
@@ -142,20 +158,36 @@ class Database:
     async def next_notification(self):
         return await self.pool.fetchrow(
             "WITH candidate AS (SELECT id FROM outbox WHERE delivered_at IS NULL "
-            "AND attempts < 10 AND available_at <= now() ORDER BY id "
+            "AND failed_at IS NULL AND attempts < 10 AND available_at <= now() ORDER BY id "
             "FOR UPDATE SKIP LOCKED LIMIT 1) "
             "UPDATE outbox SET attempts=attempts+1,available_at=now()+interval '5 minutes' "
             "WHERE id=(SELECT id FROM candidate) RETURNING *"
         )
 
     async def mark_delivered(self, notification_id: int):
-        await self.pool.execute("UPDATE outbox SET delivered_at=now() WHERE id=$1", notification_id)
-
-    async def defer_notification(self, notification_id: int):
         await self.pool.execute(
-            "UPDATE outbox SET available_at=now()+interval '5 minutes' WHERE id=$1",
-            notification_id,
+            "UPDATE outbox SET delivered_at=now(),last_error=NULL WHERE id=$1", notification_id
         )
+
+    async def defer_notification(self, notification_id: int, error: str):
+        await self.pool.execute(
+            "UPDATE outbox SET available_at=now()+interval '5 minutes',last_error=$2 WHERE id=$1",
+            notification_id,
+            error[:500],
+        )
+
+    async def fail_notification(self, notification_id: int, error: str):
+        await self.pool.execute(
+            "UPDATE outbox SET failed_at=now(),last_error=$2 WHERE id=$1",
+            notification_id,
+            error[:500],
+        )
+
+    async def save_external_lead_id(self, order_id: int, lead_id: str | int | None):
+        if lead_id is not None:
+            await self.pool.execute(
+                "UPDATE orders SET external_lead_id=$2 WHERE id=$1", order_id, str(lead_id)
+            )
 
     async def retarget_pending_manager_notifications(self, chat: int):
         return await self.pool.fetchval(
@@ -173,6 +205,19 @@ class Database:
             chat,
             payload,
         )
+
+    async def enqueue_contact(
+        self, key: str, chat: int, manager_payload: dict, webhook_lead: dict | None
+    ):
+        async with self.pool.acquire() as conn, conn.transaction():
+            await self.enqueue(conn, key, chat, manager_payload)
+            if webhook_lead is not None:
+                await self.enqueue(
+                    conn,
+                    f"n8n:{key}",
+                    chat,
+                    {"kind": "webhook", "lead": webhook_lead},
+                )
 
 
 class PostgresStorage(BaseStorage):

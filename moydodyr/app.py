@@ -1,12 +1,15 @@
 import asyncio
 import calendar
 import html
+import json
 import logging
 import re
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -73,6 +76,43 @@ class Form(StatesGroup):
     photos = State()
     confirm = State()
     manager_message = State()
+
+
+class PermanentWebhookError(Exception):
+    pass
+
+
+def post_n8n_lead(url: str, secret: str, lead: dict) -> str | int | None:
+    body = {**lead, "secret": secret}
+    request = Request(
+        url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            status = response.status
+            content = response.read()
+    except HTTPError as error:
+        if error.code == 401:
+            raise PermanentWebhookError("n8n returned HTTP 401; check N8N_WEBHOOK_SECRET") from None
+        raise RuntimeError(f"n8n returned HTTP {error.code}") from None
+    except URLError as error:
+        raise RuntimeError(f"n8n connection failed: {type(error.reason).__name__}") from None
+    if status != 200:
+        raise RuntimeError(f"n8n returned HTTP {status}")
+    try:
+        result = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise RuntimeError("n8n returned invalid JSON") from None
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        raise RuntimeError("n8n response did not confirm success")
+    return result.get("lead_id")
+
+
+async def send_n8n_lead(url: str, secret: str, lead: dict) -> str | int | None:
+    return await asyncio.to_thread(post_n8n_lead, url, secret, lead)
 
 
 async def show_group_admin_panel(message: Message, settings: Settings):
@@ -918,8 +958,32 @@ async def confirm(message: Message, state: FSMContext, db: Database, settings: S
         await ask_date(message, state)
         return
     data["telegram_user"] = message.from_user.id
+    catalog = await db.catalog()
+    webhook_payload = None
+    if settings.webhook_enabled:
+        extras = [catalog["extras"][key]["title"] for key in data.get("extras", [])]
+        webhook_payload = {
+            "name": data["name"],
+            "phone": data["phone"],
+            "telegram": f"@{message.from_user.username}"
+            if message.from_user.username
+            else str(message.from_user.id),
+            "service": catalog["services"][data["service"]]["title"],
+            "address": data["address"],
+            "date": data["date"],
+            "price": (data.get("estimate") or {}).get("total"),
+            "comment": data.get("comment", ""),
+            "object": catalog["objects"][data["object"]],
+            "area": data["area"],
+            "time": data["time"],
+            "extras": extras,
+        }
     await db.submit(
-        message.from_user.id, data, settings.manager_chat_id, (await db.catalog())["accepted"]
+        message.from_user.id,
+        data,
+        settings.manager_chat_id,
+        catalog["accepted"],
+        webhook_payload=webhook_payload,
     )
     await state.clear()
 
@@ -953,17 +1017,36 @@ async def manager_message(message: Message, state: FSMContext, db: Database, set
         await message.answer("Сообщение должно быть не длиннее 3000 символов.")
         return
     user = message.from_user
-    await db.enqueue_message(
-        f"contact:{user.id}:{uuid4()}",
+    source = await db.pool.fetchval("SELECT source FROM users WHERE id=$1", user.id)
+    request_key = f"contact:{user.id}:{uuid4()}"
+    phone = data.get("contact", "не указан")
+    manager_payload = {
+        "kind": "manager_message",
+        "text": (
+            f"Сообщение от {html.escape(user.full_name)} "
+            f"(@{html.escape(user.username or 'нет username')}, id {user.id})\n"
+            f"Телефон: {html.escape(phone)}\n\n{html.escape(text)}"
+        ),
+    }
+    webhook_lead = None
+    if settings.webhook_enabled:
+        webhook_lead = {
+            "name": user.full_name,
+            "phone": phone if phone != "не указан" else "",
+            "telegram": f"@{user.username}" if user.username else str(user.id),
+            "service": "Связаться с менеджером",
+            "address": "",
+            "date": None,
+            "price": None,
+            "comment": text,
+            "source": source,
+            "lead_type": "manager_contact",
+        }
+    await db.enqueue_contact(
+        request_key,
         settings.manager_chat_id,
-        {
-            "kind": "manager_message",
-            "text": (
-                f"Сообщение от {html.escape(user.full_name)} "
-                f"(@{html.escape(user.username or 'нет username')}, id {user.id})\n"
-                f"Телефон: {html.escape(data.get('contact', 'не указан'))}\n\n{html.escape(text)}"
-            ),
-        },
+        manager_payload,
+        webhook_lead,
     )
     await state.clear()
     await message.answer(
@@ -1004,7 +1087,7 @@ async def order_action(query: CallbackQuery, db: Database, settings: Settings):
         await query.message.edit_text(order_text(order, catalog), reply_markup=keyboard)
 
 
-async def deliver_outbox(bot: Bot, db: Database):
+async def deliver_outbox(bot: Bot, db: Database, settings: Settings):
     while True:
         row = await db.next_notification()
         if row is None:
@@ -1031,12 +1114,32 @@ async def deliver_outbox(bot: Bot, db: Database):
                 await bot.send_photo(row["chat_id"], data["photo"], caption=data["caption"])
             elif data["kind"] == "text":
                 await bot.send_message(row["chat_id"], data["text"], reply_markup=MENU)
+            elif data["kind"] == "webhook":
+                if not settings.webhook_enabled:
+                    raise PermanentWebhookError("n8n webhook is not configured")
+                lead_id = await send_n8n_lead(
+                    settings.n8n_webhook_url,
+                    settings.n8n_webhook_secret,
+                    data["lead"],
+                )
+                if data.get("order_id") is not None:
+                    await db.save_external_lead_id(data["order_id"], lead_id)
             else:
                 await bot.send_message(row["chat_id"], data["text"])
             await db.mark_delivered(row["id"])
-        except Exception:
-            logging.exception("Failed to deliver outbox item %s", row["id"])
-            await db.defer_notification(row["id"])
+        except PermanentWebhookError as error:
+            await db.fail_notification(row["id"], str(error))
+            logging.error("Permanently failed outbox item %s: %s", row["id"], error)
+        except Exception as error:
+            # Webhook errors are deliberately reduced to their message: our HTTP
+            # client messages contain status/reason, but never request body or secret.
+            safe_error = str(error)[:500] or type(error).__name__
+            if row["attempts"] >= 10:
+                await db.fail_notification(row["id"], safe_error)
+                logging.error("Outbox item %s exhausted retries (%s)", row["id"], safe_error)
+            else:
+                await db.defer_notification(row["id"], safe_error)
+                logging.warning("Failed to deliver outbox item %s (%s)", row["id"], safe_error)
 
 
 @router.message()
@@ -1058,7 +1161,7 @@ async def run():
     dp.include_router(router)
     try:
         async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(deliver_outbox(bot, db))
+            tasks.create_task(deliver_outbox(bot, db, settings))
             tasks.create_task(
                 dp.start_polling(
                     bot, db=db, settings=settings, allowed_updates=dp.resolve_used_update_types()
