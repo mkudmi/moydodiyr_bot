@@ -1,0 +1,19 @@
+[project]
+name = "moydodyr-bot"
+version = "0.1.0"
+description = "Telegram-бот клининговой компании Мойдодыр"
+requires-python = ">=3.12"
+dependencies = ["aiogram>=3.28,<4", "asyncpg>=0.31,<1", "python-dotenv>=1.1,<2", "tzdata>=2025.2"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.12"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

@@ -1,0 +1,23 @@
+name: moydodyr
+
+services:
+  database:
+    image: postgres:17-alpine
+    container_name: moydodyr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: moydodyr
+      POSTGRES_USER: moydodyr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - moydodyr_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moydodyr -d moydodyr"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  moydodyr_postgres:
