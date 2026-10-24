@@ -40,7 +40,7 @@ async def screen_action(query: CallbackQuery, state: FSMContext, db: Database, s
         await query.answer()
         if await state.get_state() == Form.photos.state:
             await flush_user_albums(
-                query.message.model_copy(update={"from_user": query.from_user}), state
+                query.message.model_copy(update={"from_user": query.from_user}), state, db
             )
         await go_back(query.message, state)
         return

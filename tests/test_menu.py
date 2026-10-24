@@ -18,7 +18,11 @@ from tests.test_welcome import load_catalog
 )
 async def test_inline_menu_edits_photo_without_sending_message(screen_env, action):
     bot, session, state, message = screen_env
-    db = SimpleNamespace(register_user=AsyncMock(), catalog=AsyncMock(return_value=load_catalog()))
+    db = SimpleNamespace(
+        register_user=AsyncMock(),
+        catalog=AsyncMock(return_value=load_catalog()),
+        customer_orders=AsyncMock(return_value=[]),
+    )
     await start(message, state, db)
     photo = (await state.get_data())[SCREEN_KEY]
     query = CallbackQuery(

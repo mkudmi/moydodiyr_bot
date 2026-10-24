@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.methods import DeleteMessage, EditMessageCaption
-from aiogram.types import Location
+from aiogram.types import Contact, Location
 
 from moydodyr.bot.handlers import orders
 from moydodyr.bot.services.screen import SCREEN_KEY
@@ -83,3 +83,28 @@ async def test_address_deleted_after_calendar_is_shown(screen_env, kind):
         assert deletions[0].message_id == message.message_id
         assert isinstance(session.calls[-2], EditMessageCaption)
         assert isinstance(session.calls[-1], DeleteMessage)
+
+
+@pytest.mark.parametrize("kind", ["name", "phone", "contact"])
+async def test_saved_name_and_phone_messages_are_deleted(screen_env, kind):
+    _, session, state, message = screen_env
+    await state.update_data(**{SCREEN_KEY: {"message_id": 100, "photo": True}})
+    if kind == "name":
+        await state.set_state(Form.name)
+        await orders.choose_name(message.model_copy(update={"text": "Иван"}), state)
+        assert (await state.get_data())["name"] == "Иван"
+        assert await state.get_state() == Form.phone.state
+    else:
+        await state.set_state(Form.phone)
+        if kind == "contact":
+            message = message.model_copy(
+                update={"contact": Contact(phone_number="79991234567", first_name="Иван")}
+            )
+            await orders.choose_phone_contact(message, state)
+        else:
+            await orders.choose_phone(message.model_copy(update={"text": "89991234567"}), state)
+        assert (await state.get_data())["phone"] == "+79991234567"
+        assert await state.get_state() == Form.comment.state
+    assert isinstance(session.calls[-2], EditMessageCaption)
+    assert isinstance(session.calls[-1], DeleteMessage)
+    assert session.calls[-1].message_id == message.message_id

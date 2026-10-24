@@ -45,6 +45,10 @@ async def test_dispatcher_routes_object_callback_to_customer_fsm(screen_env):
     assert (await state.get_data())["object"] == "flat"
     assert not any(isinstance(call, SendMessage) for call in session.calls)
     assert any(isinstance(call, EditMessageCaption) for call in session.calls)
+    db.customer_orders = AsyncMock(return_value=[])
+    await click("menu:my_orders", 4)
+    db.customer_orders.assert_awaited_once_with(42, active=True, offset=0)
+    assert await state.get_state() is None
 
 
 async def test_receipt_edits_screen_but_does_not_replace_new_flow(screen_env, monkeypatch):

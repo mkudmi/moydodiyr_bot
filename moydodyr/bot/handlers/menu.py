@@ -12,6 +12,7 @@ from aiogram.types import (
 from aiogram.utils.deep_linking import decode_payload
 
 from moydodyr.bot.formatting import services_text
+from moydodyr.bot.handlers.account import show_customer_orders
 from moydodyr.bot.handlers.contact import contact_manager
 from moydodyr.bot.handlers.orders import begin_form
 from moydodyr.bot.keyboards import (
@@ -109,6 +110,7 @@ async def faq(message: Message, db: Database, state: FSMContext):
             "menu:faq",
             "menu:contact",
             "menu:home",
+            "menu:my_orders",
         }
     )
 )
@@ -129,6 +131,8 @@ async def menu_action(query: CallbackQuery, state: FSMContext, db: Database):
     elif action == "home":
         await clear_flow(state)
         await show_screen(query.message, state, (await db.catalog())["welcome"], reply_markup=MENU)
+    elif action == "my_orders":
+        await show_customer_orders(query.message, state, db, query.from_user.id)
     else:
         handlers = {"services": services, "promotions": promotions, "reviews": reviews, "faq": faq}
         await clear_flow(state)

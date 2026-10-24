@@ -1,9 +1,32 @@
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 MOSCOW = ZoneInfo("Europe/Moscow")
+
+
+def cancellation_deadline(payload: dict) -> datetime | None:
+    try:
+        day = date.fromisoformat(payload["date"])
+        raw_time = payload.get("time") or "Любое время"
+        start = (
+            time.min
+            if raw_time == "Любое время"
+            else time.fromisoformat(raw_time.replace("–", "-").split("-", 1)[0])
+        )
+        return datetime.combine(day, start, tzinfo=MOSCOW) - timedelta(hours=24)
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def customer_can_cancel(order, now: datetime | None = None) -> bool:
+    deadline = cancellation_deadline(order["payload"])
+    return (
+        order["status"] in {"new", "working", "agreed"}
+        and deadline is not None
+        and (now or datetime.now(MOSCOW)) <= deadline
+    )
 
 
 def area_value(text: str) -> str:

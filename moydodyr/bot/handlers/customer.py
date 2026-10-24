@@ -1,5 +1,6 @@
 from aiogram import Router
 
+from moydodyr.bot.handlers.account import router as account_router
 from moydodyr.bot.handlers.admin import router as admin_router
 from moydodyr.bot.handlers.contact import router as contact_router
 from moydodyr.bot.handlers.fallback import router as fallback_router
@@ -10,6 +11,7 @@ from moydodyr.bot.handlers.screen import router as screen_router
 router = Router()
 router.include_router(menu_router)
 router.include_router(admin_router)
+router.include_router(account_router)
 router.include_router(orders_router)
 router.include_router(contact_router)
 router.include_router(screen_router)

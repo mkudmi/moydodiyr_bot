@@ -25,7 +25,7 @@ async def deliver_outbox(bot: Bot, db: Database, settings: Settings, isolation=N
             continue
         try:
             data = row["payload"]
-            if data["kind"] == "order":
+            if data["kind"] in {"order", "order_cancelled"}:
                 order = await db.order(data["order_id"])
                 catalog = await db.catalog()
                 markup = InlineKeyboardMarkup(
@@ -37,8 +37,13 @@ async def deliver_outbox(bot: Bot, db: Database, settings: Settings, isolation=N
                         ]
                     ]
                 )
+                if order["status"] != "new" or data["kind"] == "order_cancelled":
+                    markup = None
+                prefix = (
+                    "❌ Клиент отменил заявку.\n\n" if data["kind"] == "order_cancelled" else ""
+                )
                 await bot.send_message(
-                    row["chat_id"], order_text(order, catalog), reply_markup=markup
+                    row["chat_id"], prefix + order_text(order, catalog), reply_markup=markup
                 )
             elif data["kind"] == "photo":
                 await bot.send_photo(row["chat_id"], data["photo"], caption=data["caption"])

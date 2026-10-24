@@ -10,6 +10,7 @@ from moydodyr.bot.handlers.customer import router as customer_router
 from moydodyr.bot.handlers.group import group_router
 from moydodyr.bot.handlers.photos import photos_router
 from moydodyr.bot.services.outbox import deliver_outbox
+from moydodyr.bot.services.photo_archive import backfill_order_photos
 from moydodyr.config import Settings
 from moydodyr.db import Database, PostgresStorage
 
@@ -29,6 +30,7 @@ async def run():
     dp.include_router(customer_router)
     try:
         async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(backfill_order_photos(bot, db))
             tasks.create_task(deliver_outbox(bot, db, settings, isolation))
             tasks.create_task(
                 dp.start_polling(

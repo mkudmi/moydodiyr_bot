@@ -14,6 +14,7 @@ MENU = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="🧮 Рассчитать стоимость", callback_data="menu:estimate")],
         [InlineKeyboardButton(text="📅 Оставить заявку", callback_data="menu:order")],
+        [InlineKeyboardButton(text="📋 Мои заявки", callback_data="menu:my_orders")],
         [
             InlineKeyboardButton(text="🧹 Услуги и цены", callback_data="menu:services"),
             InlineKeyboardButton(text="🔥 Акции", callback_data="menu:promotions"),
@@ -152,15 +153,15 @@ def time_keyboard(day: str) -> InlineKeyboardMarkup:
     row = []
     for slot in slots:
         row.append(InlineKeyboardButton(text=slot, callback_data=f"tm:select:{slot}"))
-        if len(row) == 3:
+        if len(row) == 2:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.extend(
+    rows.append(
         [
-            [InlineKeyboardButton(text="Время не важно", callback_data="tm:any")],
-            [InlineKeyboardButton(text="Ввести вручную", callback_data="tm:custom")],
+            InlineKeyboardButton(text="Любое время", callback_data="tm:any"),
+            InlineKeyboardButton(text="Указать своё", callback_data="tm:custom"),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)

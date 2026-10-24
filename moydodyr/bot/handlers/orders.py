@@ -1,10 +1,8 @@
 import html
-import logging
 from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -21,6 +19,8 @@ from moydodyr.bot.keyboards import (
     item_keyboard,
     time_keyboard,
 )
+from moydodyr.bot.services.messages import delete_saved_input
+from moydodyr.bot.services.photo_archive import ensure_draft_photos
 from moydodyr.bot.services.photos import flush_user_albums
 from moydodyr.bot.services.screen import SCREEN_KEY, bind_screen, clear_flow, show_screen
 from moydodyr.bot.states import Form
@@ -121,13 +121,6 @@ async def choose_area(message: Message, state: FSMContext, db: Database):
     else:
         await complete_service_selection(message, state, db)
     await delete_saved_input(message)
-
-
-async def delete_saved_input(message: Message):
-    try:
-        await message.delete()
-    except TelegramAPIError as error:
-        logging.warning("Could not delete handled user input (%s)", type(error).__name__)
 
 
 async def complete_service_selection(message: Message, state: FSMContext, db: Database):
@@ -386,6 +379,7 @@ async def choose_name(message: Message, state: FSMContext):
             resize_keyboard=True,
         ),
     )
+    await delete_saved_input(message)
 
 
 @router.message(Form.phone, F.contact)
@@ -398,6 +392,7 @@ async def choose_phone_contact(message: Message, state: FSMContext):
         return
     await state.update_data(phone=phone)
     await ask_comment(message, state)
+    await delete_saved_input(message)
 
 
 @router.message(Form.phone)
@@ -409,6 +404,7 @@ async def choose_phone(message: Message, state: FSMContext):
         return
     await state.update_data(phone=phone)
     await ask_comment(message, state)
+    await delete_saved_input(message)
 
 
 async def ask_comment(message: Message, state: FSMContext):
@@ -444,6 +440,9 @@ async def choose_comment(message: Message, state: FSMContext):
             resize_keyboard=True,
         ),
     )
+    screen_id = (await state.get_data()).get(SCREEN_KEY, {}).get("message_id")
+    if message.message_id != screen_id:
+        await delete_saved_input(message)
 
 
 @router.message(Form.photos)
@@ -451,7 +450,7 @@ async def finish_photos(message: Message, state: FSMContext, db: Database):
     if message.text not in {"Готово", "Пропустить"}:
         await show_screen(message, state, "Пришлите фотографию или нажмите «Готово».")
         return
-    await flush_user_albums(message, state)
+    await flush_user_albums(message, state, db)
     data = await state.get_data()
     catalog = await db.catalog()
     estimate_data = estimate(catalog, data)
@@ -499,6 +498,15 @@ async def confirm(message: Message, state: FSMContext, db: Database, settings: S
         await ask_date(message, state)
         return
     data["telegram_user"] = message.from_user.id
+    try:
+        await ensure_draft_photos(message.bot, db, message.from_user.id, data)
+    except Exception:
+        await show_screen(
+            message,
+            state,
+            "❗ Не удалось сохранить фотографии в базе. Попробуйте подтвердить заявку ещё раз.",
+        )
+        return
     catalog = await db.catalog()
     webhook_payload = None
     if settings.webhook_enabled:

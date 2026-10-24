@@ -1,11 +1,13 @@
+import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 from aiogram.fsm.storage.base import BaseStorage, StorageKey
 
-from moydodyr.domain import validate_catalog
+from moydodyr.domain import MOSCOW, customer_can_cancel, validate_catalog
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,6 +55,96 @@ class Database:
             "INSERT INTO users(id,source) VALUES($1,$2) ON CONFLICT DO NOTHING", user_id, source
         )
 
+    async def draft_photo(self, user_id: int, draft_id: str, file_id: str):
+        return await self.pool.fetchrow(
+            "SELECT id,telegram_file_id,telegram_unique_id,content_type,"
+            "file_size,sha256,width,height "
+            "FROM photo_files WHERE user_id=$1 AND draft_id=$2 AND telegram_file_id=$3",
+            user_id,
+            UUID(draft_id),
+            file_id,
+        )
+
+    async def archive_photo(
+        self,
+        user_id: int,
+        draft_id: str,
+        file_id: str,
+        content: bytes,
+        content_type: str,
+        unique_id=None,
+        width=None,
+        height=None,
+    ):
+        if not 0 < len(content) <= 20 * 1024 * 1024:
+            raise ValueError("Invalid photo size")
+        await self.register_user(user_id)
+        return await self.pool.fetchrow(
+            "INSERT INTO photo_files(id,user_id,draft_id,telegram_file_id,telegram_unique_id,"
+            "content_type,file_size,sha256,width,height,content) "
+            "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) "
+            "ON CONFLICT(user_id,draft_id,telegram_file_id) DO UPDATE "
+            "SET telegram_file_id=EXCLUDED.telegram_file_id "
+            "RETURNING id,telegram_file_id,telegram_unique_id,content_type,"
+            "file_size,sha256,width,height",
+            uuid4(),
+            user_id,
+            UUID(draft_id),
+            file_id,
+            unique_id,
+            content_type,
+            len(content),
+            hashlib.sha256(content).hexdigest(),
+            width,
+            height,
+            content,
+        )
+
+    async def customer_order_photos(self, user_id: int, order_id: int):
+        return await self.pool.fetch(
+            "SELECT p.position,p.telegram_file_id,p.photo_id,f.content_type,f.file_size,f.sha256,"
+            "f.width,f.height FROM order_photos p JOIN orders o ON o.id=p.order_id "
+            "LEFT JOIN photo_files f ON f.id=p.photo_id AND f.user_id=o.user_id "
+            "WHERE o.id=$1 AND o.user_id=$2 ORDER BY p.position",
+            order_id,
+            user_id,
+        )
+
+    async def customer_order_photo(self, user_id: int, order_id: int, photo_id: str):
+        return await self.pool.fetchrow(
+            "SELECT f.* FROM photo_files f JOIN order_photos p ON p.photo_id=f.id "
+            "JOIN orders o ON o.id=p.order_id "
+            "WHERE o.id=$1 AND o.user_id=$2 AND f.user_id=$2 AND f.id=$3",
+            order_id,
+            user_id,
+            UUID(photo_id),
+        )
+
+    async def unarchived_order_photos(
+        self, limit: int = 100, after_order_id: int = 0, after_position: int = -1
+    ):
+        return await self.pool.fetch(
+            "SELECT p.order_id,p.position,p.telegram_file_id,o.user_id,o.draft_id "
+            "FROM order_photos p JOIN orders o ON o.id=p.order_id "
+            "WHERE p.photo_id IS NULL AND (p.order_id,p.position)>($2,$3) "
+            "ORDER BY p.order_id,p.position LIMIT $1",
+            limit,
+            after_order_id,
+            after_position,
+        )
+
+    async def link_order_photo(self, user_id: int, order_id: int, position: int, photo_id: str):
+        return await self.pool.execute(
+            "UPDATE order_photos p SET photo_id=f.id FROM orders o,photo_files f "
+            "WHERE p.order_id=o.id AND o.id=$1 AND o.user_id=$2 AND f.user_id=$2 "
+            "AND f.draft_id=o.draft_id AND f.telegram_file_id=p.telegram_file_id "
+            "AND p.position=$3 AND f.id=$4",
+            order_id,
+            user_id,
+            position,
+            UUID(str(photo_id)),
+        )
+
     async def enqueue(self, conn, key: str, chat: int, payload: dict):
         await conn.execute(
             "INSERT INTO outbox(dedupe_key,chat_id,payload) VALUES($1,$2,$3) "
@@ -72,6 +164,10 @@ class Database:
         receipt_screen: dict | None = None,
     ):
         async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                "INSERT INTO users(id,source) VALUES($1,'Прямой переход') ON CONFLICT DO NOTHING",
+                user_id,
+            )
             source = await conn.fetchval("SELECT source FROM users WHERE id=$1", user_id)
             inserted = await conn.fetchrow(
                 "INSERT INTO orders(draft_id,user_id,source,payload) VALUES($1,$2,$3,$4) "
@@ -86,9 +182,41 @@ class Database:
                     "SELECT * FROM orders WHERE draft_id=$1", UUID(draft["draft_id"])
                 )
             order_id = inserted["id"]
+            attachments = []
+            for position, file_id in enumerate(draft.get("photos", [])[:5]):
+                photo = await conn.fetchrow(
+                    "SELECT id,content_type,file_size,sha256,width,height FROM photo_files "
+                    "WHERE user_id=$1 AND draft_id=$2 AND telegram_file_id=$3",
+                    user_id,
+                    UUID(draft["draft_id"]),
+                    file_id,
+                )
+                await conn.execute(
+                    "INSERT INTO order_photos(order_id,position,telegram_file_id,photo_id) "
+                    "VALUES($1,$2,$3,$4)",
+                    order_id,
+                    position,
+                    file_id,
+                    photo["id"] if photo else None,
+                )
+                attachment = {
+                    "photo_id": str(photo["id"]) if photo else None,
+                    "position": position,
+                    "file_id": file_id,
+                }
+                if photo:
+                    attachment.update(
+                        {
+                            key: photo[key]
+                            for key in ("content_type", "file_size", "sha256", "width", "height")
+                        }
+                    )
+                attachments.append(attachment)
             if webhook_payload is not None:
                 webhook_payload["order_id"] = order_id
                 webhook_payload["source"] = source
+                webhook_payload["telegram_user_id"] = user_id
+                webhook_payload["photos"] = attachments
                 await self.enqueue(
                     conn,
                     f"n8n:{order_id}",
@@ -121,6 +249,64 @@ class Database:
 
     async def order(self, order_id: int):
         return await self.pool.fetchrow("SELECT * FROM orders WHERE id=$1", order_id)
+
+    async def customer_orders(self, user_id: int, active: bool, offset: int = 0, limit: int = 6):
+        return await self.pool.fetch(
+            "SELECT * FROM orders WHERE user_id=$1 AND "
+            "((status IN ('new','working') OR (status='agreed' "
+            "AND COALESCE(payload->>'date','') >= $3)) = $2) "
+            "ORDER BY created_at DESC,id DESC LIMIT $4 OFFSET $5",
+            user_id,
+            active,
+            datetime.now(MOSCOW).date().isoformat(),
+            limit,
+            offset,
+        )
+
+    async def customer_order(self, user_id: int, order_id: int):
+        return await self.pool.fetchrow(
+            "SELECT * FROM orders WHERE id=$1 AND user_id=$2",
+            order_id,
+            user_id,
+        )
+
+    async def customer_order_history(self, user_id: int, order_id: int):
+        return await self.pool.fetch(
+            "SELECT h.* FROM order_history h JOIN orders o ON o.id=h.order_id "
+            "WHERE o.id=$1 AND o.user_id=$2 ORDER BY h.created_at DESC,h.id DESC LIMIT 20",
+            order_id,
+            user_id,
+        )
+
+    async def cancel_customer_order(self, user_id: int, order_id: int, manager_chat: int):
+        async with self.pool.acquire() as conn, conn.transaction():
+            order = await conn.fetchrow(
+                "SELECT * FROM orders WHERE id=$1 AND user_id=$2 FOR UPDATE",
+                order_id,
+                user_id,
+            )
+            if order is None:
+                return False, "Заявка не найдена."
+            if order["status"] == "cancelled":
+                return False, "Эта заявка уже отменена."
+            if not customer_can_cancel(order):
+                return False, "Отмена недоступна: до уборки должно оставаться не менее 24 часов."
+            await conn.execute(
+                "UPDATE orders SET status='cancelled',updated_at=now() WHERE id=$1", order_id
+            )
+            await conn.execute(
+                "INSERT INTO order_history(order_id,actor_user_id,status) "
+                "VALUES($1,$2,'cancelled')",
+                order_id,
+                user_id,
+            )
+            await self.enqueue(
+                conn,
+                f"customer-cancel:{order_id}",
+                manager_chat,
+                {"kind": "order_cancelled", "order_id": order_id},
+            )
+            return True, "Заявка отменена."
 
     async def new_orders(self, limit: int = 10):
         return await self.pool.fetch(
@@ -200,7 +386,8 @@ class Database:
         return await self.pool.fetchval(
             "WITH moved AS (UPDATE outbox SET chat_id=$1, available_at=now() "
             "WHERE delivered_at IS NULL AND payload->>'kind' IN "
-            "('order','photo','manager_message') RETURNING id) SELECT count(*) FROM moved",
+            "('order','photo','manager_message','order_cancelled') "
+            "RETURNING id) SELECT count(*) FROM moved",
             chat,
         )
 

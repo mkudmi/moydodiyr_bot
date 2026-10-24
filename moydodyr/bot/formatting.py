@@ -1,5 +1,64 @@
 import html
+from datetime import date
 from decimal import Decimal
+
+from moydodyr.domain import MOSCOW
+
+ORDER_STATUSES = {
+    "new": "Новая",
+    "working": "В работе",
+    "agreed": "Согласована",
+    "cancelled": "Отменена",
+}
+
+
+def display_date(value: str) -> str:
+    try:
+        return date.fromisoformat(value).strftime("%d.%m.%Y")
+    except (ValueError, TypeError):
+        return value or "не указана"
+
+
+def customer_order_text(order, catalog: dict, history) -> str:
+    payload = order["payload"]
+    service = (
+        catalog["services"]
+        .get(payload.get("service"), {})
+        .get("title", payload.get("service", "—"))
+    )
+    obj = catalog["objects"].get(payload.get("object"), payload.get("object", "—"))
+    lines = [
+        f"Заявка №{order['id']}",
+        f"Статус: {ORDER_STATUSES.get(order['status'], order['status'])}",
+        f"Создана: {order['created_at'].astimezone(MOSCOW):%d.%m.%Y %H:%M}",
+        f"Услуга: {service}",
+        f"Объект: {obj}",
+        f"Площадь: {str(payload.get('area', '—')).replace('.', ',')} м²",
+        f"Адрес: {payload.get('address', '—')}",
+        f"Желаемая дата: {display_date(payload.get('date'))}, {payload.get('time', '—')}",
+    ]
+    extras = [catalog["extras"].get(key, {}).get("title", key) for key in payload.get("extras", [])]
+    if extras:
+        lines.append("Дополнительные работы: " + ", ".join(extras))
+    estimate = payload.get("estimate")
+    if estimate and estimate.get("total") is not None:
+        lines.append(f"Предварительно: {rubles(estimate['total'])} ₽")
+    else:
+        lines.append("Стоимость уточнит менеджер.")
+    if payload.get("comment"):
+        lines.append(f"Комментарий: {payload['comment']}")
+    lines += [
+        "",
+        "История статусов:",
+        f"• {order['created_at'].astimezone(MOSCOW):%d.%m.%Y %H:%M} — Заявка создана",
+    ]
+    for event in reversed(history):
+        actor = " (отменена вами)" if event.get("actor_user_id") == order["user_id"] else ""
+        lines.append(
+            f"• {event['created_at'].astimezone(MOSCOW):%d.%m.%Y %H:%M} — "
+            f"{ORDER_STATUSES.get(event['status'], event['status'])}{actor}"
+        )
+    return html.escape("\n".join(lines))
 
 
 def rubles(value) -> str:

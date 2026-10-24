@@ -12,20 +12,20 @@ from moydodyr.bot.services.photos import (
     flush_album,
 )
 from moydodyr.bot.states import Form
+from moydodyr.db import Database
 
 photos_router = Router()
 photos_router.message.filter(F.chat.type == "private")
 
 
 @photos_router.message(Form.photos, F.photo)
-async def add_photo(message: Message, state: FSMContext):
+async def add_photo(message: Message, state: FSMContext, db: Database):
     if not message.media_group_id:
-        await append_photos([message], state)
+        await append_photos([message], state, db)
         return
     key = (message.chat.id, message.from_user.id, message.media_group_id)
     async with ALBUM_GUARD:
         PENDING_ALBUMS.setdefault(key, []).append(message)
         previous_task = ALBUM_TASKS.get(key)
-        if previous_task and not previous_task.done():
-            previous_task.cancel()
-        ALBUM_TASKS[key] = asyncio.create_task(flush_album(key, state))
+        if previous_task is None or previous_task.done():
+            ALBUM_TASKS[key] = asyncio.create_task(flush_album(key, state, db))

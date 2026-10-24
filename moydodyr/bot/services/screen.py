@@ -57,6 +57,7 @@ async def clear_flow(state: FSMContext):
     await state.clear()
     if screen:
         screen = {**screen, "history": [], "state": None, "draft": {}, "image": "welcome"}
+        screen.pop("cancel_confirmation", None)
         await state.update_data(**{SCREEN_KEY: screen})
 
 
@@ -152,6 +153,7 @@ async def show_screen(
 ):
     data = await state.get_data()
     screen = dict(data.get(SCREEN_KEY) or {})
+    screen.pop("cancel_confirmation", None)
     current_state = await state.get_state()
     history = list(screen.get("history", []))
     if current_state is None:

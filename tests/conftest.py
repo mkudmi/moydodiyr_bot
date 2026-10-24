@@ -6,8 +6,8 @@ from aiogram.client.session.base import BaseSession
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.methods import SendMessage, SendPhoto
-from aiogram.types import Chat, Message, PhotoSize, User
+from aiogram.methods import GetFile, SendMessage, SendPhoto
+from aiogram.types import Chat, File, Message, PhotoSize, User
 
 
 class FakeSession(BaseSession):
@@ -19,10 +19,17 @@ class FakeSession(BaseSession):
         pass
 
     async def stream_content(self, *args, **kwargs):
-        yield b""
+        yield b"\xff\xd8\xfftest-image"
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
+        if isinstance(method, GetFile):
+            return File(
+                file_id=method.file_id,
+                file_unique_id="unique",
+                file_path="photos/test.jpg",
+                file_size=13,
+            )
         if isinstance(method, (SendMessage, SendPhoto)):
             return Message(
                 message_id=100,
