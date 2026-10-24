@@ -49,7 +49,7 @@ async def begin_form(message: Message, state: FSMContext, db: Database, mode: st
         state,
         "Выберите тип объекта:",
         reply_markup=choices(objects),
-        image="estimate" if mode == "estimate" else "welcome",
+        image="estimate" if mode == "estimate" else "order",
     )
 
 
@@ -105,7 +105,7 @@ async def choose_area(message: Message, state: FSMContext, db: Database):
             state,
             f"❗ {e}\n\nНапишите корректную площадь и отправьте её сообщением в этот чат.",
         )
-        await delete_area_input(message)
+        await delete_saved_input(message)
         return
     await state.update_data(area=area)
     catalog = await db.catalog()
@@ -120,14 +120,14 @@ async def choose_area(message: Message, state: FSMContext, db: Database):
         )
     else:
         await complete_service_selection(message, state, db)
-    await delete_area_input(message)
+    await delete_saved_input(message)
 
 
-async def delete_area_input(message: Message):
+async def delete_saved_input(message: Message):
     try:
         await message.delete()
     except TelegramAPIError as error:
-        logging.warning("Could not delete area input (%s)", type(error).__name__)
+        logging.warning("Could not delete handled user input (%s)", type(error).__name__)
 
 
 async def complete_service_selection(message: Message, state: FSMContext, db: Database):
@@ -177,7 +177,7 @@ async def complete_service_selection(message: Message, state: FSMContext, db: Da
 
 @router.message(Form.estimate_offer, F.text == "📩 Оставить заявку")
 async def continue_from_estimate(message: Message, state: FSMContext):
-    await ask_address(message, state)
+    await ask_address(message, state, image="order")
 
 
 @router.message(Form.estimate_offer)
@@ -185,13 +185,14 @@ async def wait_estimate_choice(message: Message, state: FSMContext):
     await show_screen(message, state, "Нажмите «📩 Оставить заявку» или вернитесь в главное меню.")
 
 
-async def ask_address(message: Message, state: FSMContext):
+async def ask_address(message: Message, state: FSMContext, image=None):
     await state.set_state(Form.address)
     await show_screen(
         message,
         state,
         "Укажите адрес уборки или отправьте местоположение.",
         reply_markup=ReplyKeyboardRemove(),
+        image=image,
     )
 
 
@@ -222,6 +223,7 @@ async def address_location(message: Message, state: FSMContext):
     loc = message.location
     await state.update_data(address=f"Геолокация: {loc.latitude:.6f}, {loc.longitude:.6f}")
     await ask_date(message, state)
+    await delete_saved_input(message)
 
 
 @router.message(Form.address)
@@ -232,6 +234,7 @@ async def address_text(message: Message, state: FSMContext):
         return
     await state.update_data(address=value)
     await ask_date(message, state)
+    await delete_saved_input(message)
 
 
 async def ask_date(message: Message, state: FSMContext):

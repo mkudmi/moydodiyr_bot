@@ -33,6 +33,7 @@ async def test_inline_menu_edits_photo_without_sending_message(screen_env, actio
     await menu_action(query, state, db)
 
     assert not any(isinstance(call, (SendMessage, SendPhoto)) for call in session.calls)
+
     edit = next(
         call for call in session.calls if isinstance(call, (EditMessageCaption, EditMessageMedia))
     )
@@ -45,7 +46,12 @@ async def test_inline_menu_edits_photo_without_sending_message(screen_env, actio
         assert "Квартира" in str(edit.reply_markup)
         assert labels.count("↩️ Главное меню") == 1
     elif action == "menu:contact":
-        assert await state.get_state() == Form.manager_message.state
+        assert await state.get_state() is None
+        assert any(
+            button.url == "https://t.me/Moydodyr_msk"
+            for row in edit.reply_markup.inline_keyboard
+            for button in row
+        )
     else:
         assert await state.get_state() is None
 
@@ -61,7 +67,26 @@ async def test_cancel_preserves_screen_and_clears_draft(screen_env):
     assert isinstance(session.calls[0], EditMessageCaption)
 
 
-async def test_estimate_picture_is_kept_on_steps_and_restored_on_home(screen_env):
+async def test_legacy_contact_state_exits_to_direct_admin_link(screen_env):
+    from moydodyr.bot.handlers.contact import contact_manager
+
+    _, session, state, message = screen_env
+    await state.set_state(Form.manager_message)
+    await state.update_data(
+        **{SCREEN_KEY: {"message_id": 100, "photo": True}, "contact": "+79990000000"}
+    )
+    await contact_manager(message, state)
+    assert await state.get_state() is None
+    assert "contact" not in await state.get_data()
+    edit = session.calls[-1]
+    assert isinstance(edit, EditMessageCaption)
+    assert "передам" not in edit.caption
+    assert "@Moydodyr_msk" in edit.caption
+    assert edit.reply_markup.inline_keyboard[0][0].url == "https://t.me/Moydodyr_msk"
+
+
+@pytest.mark.parametrize("image", ["estimate", "order"])
+async def test_flow_picture_is_kept_on_steps_and_restored_on_home(screen_env, image):
     from moydodyr.bot.handlers import orders
 
     bot, session, state, message = screen_env
@@ -71,18 +96,18 @@ async def test_estimate_picture_is_kept_on_steps_and_restored_on_home(screen_env
         id="image",
         from_user=message.from_user,
         chat_instance="chat",
-        data="menu:estimate",
+        data=f"menu:{image}",
         message=message.model_copy(update={"message_id": 100}),
     ).as_(bot)
     session.calls.clear()
     await menu_action(query, state, db)
     edits = [call for call in session.calls if isinstance(call, EditMessageMedia)]
     assert len(edits) == 1
-    assert edits[0].media.media.path == SCREEN_IMAGES["estimate"]
-    assert SCREEN_IMAGES["estimate"].is_file()
+    assert edits[0].media.media.path == SCREEN_IMAGES[image]
+    assert SCREEN_IMAGES[image].is_file()
     await orders.choose_object(message.model_copy(update={"text": "Квартира"}), state, db)
     await go_back(message, state)
-    assert (await state.get_data())[SCREEN_KEY]["displayed_image"] == "estimate"
+    assert (await state.get_data())[SCREEN_KEY]["displayed_image"] == image
     assert sum(isinstance(call, EditMessageMedia) for call in session.calls) == 1
     await menu_action(query.model_copy(update={"data": "menu:home"}), state, db)
     edits = [call for call in session.calls if isinstance(call, EditMessageMedia)]
@@ -90,3 +115,20 @@ async def test_estimate_picture_is_kept_on_steps_and_restored_on_home(screen_env
     assert edits[-1].media.media.path == SCREEN_IMAGES["welcome"]
     assert all(call.message_id == 100 for call in edits)
     assert not any(isinstance(call, (SendMessage, SendPhoto)) for call in session.calls)
+
+
+async def test_continue_after_estimate_switches_picture_and_back_restores_it(screen_env):
+    from moydodyr.bot.handlers import orders
+    from moydodyr.bot.services.screen import show_screen
+
+    _, session, state, message = screen_env
+    await state.update_data(**{SCREEN_KEY: {"message_id": 100, "photo": True}, "mode": "estimate"})
+    await state.set_state(Form.estimate_offer)
+    await show_screen(message, state, "Результат расчёта", reply_markup=MENU, image="estimate")
+    await orders.continue_from_estimate(message, state)
+    assert await state.get_state() == Form.address.state
+    assert (await state.get_data())[SCREEN_KEY]["displayed_image"] == "order"
+    assert isinstance(session.calls[-1], EditMessageMedia)
+    await go_back(message, state)
+    assert await state.get_state() == Form.estimate_offer.state
+    assert (await state.get_data())[SCREEN_KEY]["displayed_image"] == "estimate"

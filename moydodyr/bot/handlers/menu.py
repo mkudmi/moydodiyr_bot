@@ -1,4 +1,3 @@
-import html
 import re
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from aiogram.types import (
 )
 from aiogram.utils.deep_linking import decode_payload
 
+from moydodyr.bot.formatting import services_text
 from moydodyr.bot.handlers.contact import contact_manager
 from moydodyr.bot.handlers.orders import begin_form
 from moydodyr.bot.keyboards import (
@@ -74,17 +74,12 @@ async def menu(message: Message, state: FSMContext):
 @router.message(F.text == "🧹 Услуги и цены")
 async def services(message: Message, db: Database, state: FSMContext):
     catalog = await db.catalog()
-    lines = []
-    for item in catalog["services"].values():
-        if item.get("enabled"):
-            lines.append(f"• {html.escape(item['title'])}")
     await show_screen(
         message,
         state,
-        "Доступные услуги:\n"
-        + ("\n".join(lines) or "Список уточните у менеджера.")
-        + "\n\nСтоимость зависит от объекта, площади и объёма работ. Итог подтверждает менеджер.",
+        services_text(catalog),
         reply_markup=MENU,
+        image="services",
     )
 
 

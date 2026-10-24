@@ -19,7 +19,12 @@ from moydodyr.bot.keyboards import MENU
 
 SCREEN_KEY = "_screen"
 ASSETS = Path(__file__).resolve().parents[3] / "assets"
-SCREEN_IMAGES = {"welcome": ASSETS / "welcome.png", "estimate": ASSETS / "estimate.png"}
+SCREEN_IMAGES = {
+    "welcome": ASSETS / "welcome.png",
+    "estimate": ASSETS / "estimate.png",
+    "services": ASSETS / "services.png",
+    "order": ASSETS / "order.png",
+}
 
 
 class PlainText(HTMLParser):
@@ -147,14 +152,14 @@ async def show_screen(
 ):
     data = await state.get_data()
     screen = dict(data.get(SCREEN_KEY) or {})
-    if image is not None:
-        screen["image"] = image
     current_state = await state.get_state()
     history = list(screen.get("history", []))
     if current_state is None:
         history = []
     elif screen.get("state") and screen["state"] != current_state:
         history.append(deepcopy({key: value for key, value in screen.items() if key != "history"}))
+    if image is not None:
+        screen["image"] = image
     nonce = uuid4().hex[:12]
     buttons = []
     if isinstance(reply_markup, ReplyKeyboardMarkup):

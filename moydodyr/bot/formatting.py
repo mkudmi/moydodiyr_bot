@@ -1,4 +1,47 @@
 import html
+from decimal import Decimal
+
+
+def rubles(value) -> str:
+    return format(Decimal(str(value)).normalize(), ",f").replace(",", " ").replace(".", ",")
+
+
+def services_text(catalog: dict) -> str:
+    blocks = ["🧹 Услуги и цены\nУбираем квартиры и дома в Москве и Московской области."]
+    for item in catalog["services"].values():
+        if not item.get("enabled"):
+            continue
+        lines = [html.escape(item["title"])]
+        for key, title in catalog["objects"].items():
+            rate = item.get(f"rate_{key}")
+            price = f"от {rubles(rate)} ₽/м²" if rate is not None else "цену уточнит менеджер"
+            lines.append(f"• {html.escape(title)}: {price}")
+        minimum = item.get("minimum")
+        lines.append(
+            f"Минимальная стоимость: {rubles(minimum)} ₽."
+            if minimum is not None
+            else "Минимальную стоимость уточнит менеджер."
+        )
+        blocks.append("\n".join(lines))
+    if len(blocks) == 1:
+        blocks.append("Доступные виды уборки уточните у менеджера.")
+    extras = [
+        f"• {html.escape(item['title'])}: "
+        + (
+            f"от {rubles(item['price'])} ₽"
+            if item.get("price") is not None
+            else "цену уточнит менеджер"
+        )
+        for item in catalog["extras"].values()
+        if item.get("enabled")
+    ]
+    if extras:
+        blocks.append("Дополнительные работы:\n" + "\n".join(extras))
+    blocks.append(
+        "Стоимость зависит от площади и объёма работ. Итог подтверждает менеджер.\n\n"
+        "Нажмите «🧮 Рассчитать стоимость», чтобы узнать ориентировочную цену вашей уборки."
+    )
+    return "\n\n".join(blocks)
 
 
 def order_text(order, catalog: dict) -> str:

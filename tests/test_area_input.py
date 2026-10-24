@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.methods import DeleteMessage, EditMessageCaption
+from aiogram.types import Location
 
 from moydodyr.bot.handlers import orders
 from moydodyr.bot.services.screen import SCREEN_KEY
@@ -56,3 +57,29 @@ async def test_delete_failure_does_not_interrupt_order(screen_env, monkeypatch):
     )
     assert (await state.get_data())["area"] == "65"
     assert await state.get_state() == Form.extras.state
+
+
+@pytest.mark.parametrize("kind", ["address", "location", "invalid"])
+async def test_address_deleted_after_calendar_is_shown(screen_env, kind):
+    _, session, state, message = screen_env
+    await state.update_data(**{SCREEN_KEY: {"message_id": 100, "photo": True}})
+    await state.set_state(Form.address)
+    if kind == "location":
+        message = message.model_copy(update={"location": Location(latitude=55.75, longitude=37.61)})
+        await orders.address_location(message, state)
+    else:
+        message = message.model_copy(
+            update={"text": "Москва, ул. Пушкина, дом 123" if kind == "address" else "а"}
+        )
+        await orders.address_text(message, state)
+    deletions = [call for call in session.calls if isinstance(call, DeleteMessage)]
+    if kind == "invalid":
+        assert deletions == []
+        assert await state.get_state() == Form.address.state
+        assert "address" not in await state.get_data()
+    else:
+        assert await state.get_state() == Form.date.state
+        assert (await state.get_data())["address"]
+        assert deletions[0].message_id == message.message_id
+        assert isinstance(session.calls[-2], EditMessageCaption)
+        assert isinstance(session.calls[-1], DeleteMessage)
