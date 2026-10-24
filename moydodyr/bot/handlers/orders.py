@@ -30,10 +30,14 @@ router.message.filter(F.chat.type == "private")
 
 @router.message(F.text.in_({"🧮 Рассчитать стоимость", "📅 Оставить заявку"}))
 async def begin(message: Message, state: FSMContext, db: Database):
+    mode = "estimate" if message.text == "🧮 Рассчитать стоимость" else "order"
+    await begin_form(message, state, db, mode)
+
+
+async def begin_form(message: Message, state: FSMContext, db: Database, mode: str):
     catalog = await db.catalog()
     objects = {key: value for key, value in catalog["objects"].items()}
     await state.clear()
-    mode = "estimate" if message.text == "🧮 Рассчитать стоимость" else "order"
     await state.update_data(draft_id=str(uuid4()), extras=[], photos=[], mode=mode)
     await state.set_state(Form.object)
     await message.answer("Выберите тип объекта:", reply_markup=choices(objects))

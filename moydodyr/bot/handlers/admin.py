@@ -57,8 +57,8 @@ async def admin_command(message: Message, db: Database, settings: Settings):
             if group is None or key not in updated[group] or raw.lower() not in {"true", "false"}:
                 raise ValueError("Формат: service|extra, ключ и true|false.")
             updated[group][key]["enabled"] = raw.lower() == "true"
-        elif action == "text" and len(parts) == 4:
-            _, _, key, value = parts
+        elif action == "text" and len((message.text or "").split(maxsplit=3)) == 4:
+            _, _, key, value = message.text.split(maxsplit=3)
             if key not in {"welcome", "accepted", "promotions", "reviews", "faq"}:
                 raise ValueError("Неизвестный текстовый раздел.")
             updated[key] = value

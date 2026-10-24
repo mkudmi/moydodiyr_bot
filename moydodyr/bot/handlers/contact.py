@@ -7,6 +7,7 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 from moydodyr.bot.keyboards import (
@@ -82,5 +83,7 @@ async def manager_message(message: Message, state: FSMContext, db: Database, set
     )
     await state.clear()
     await message.answer(
-        "Передал сообщение менеджеру. Он ответит вам напрямую в Telegram.", reply_markup=MENU
+        "Передал сообщение менеджеру. Он ответит вам напрямую в Telegram.",
+        reply_markup=ReplyKeyboardRemove(),
     )
+    await message.answer("Выберите действие:", reply_markup=MENU)

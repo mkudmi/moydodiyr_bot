@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 
 from moydodyr.bot.formatting import order_text
 from moydodyr.bot.keyboards import MENU
@@ -37,7 +37,10 @@ async def deliver_outbox(bot: Bot, db: Database, settings: Settings):
             elif data["kind"] == "photo":
                 await bot.send_photo(row["chat_id"], data["photo"], caption=data["caption"])
             elif data["kind"] == "text":
-                await bot.send_message(row["chat_id"], data["text"], reply_markup=MENU)
+                await bot.send_message(
+                    row["chat_id"], data["text"], reply_markup=ReplyKeyboardRemove()
+                )
+                await bot.send_message(row["chat_id"], "Выберите действие:", reply_markup=MENU)
             elif data["kind"] == "webhook":
                 if not settings.webhook_enabled:
                     raise PermanentWebhookError("n8n webhook is not configured")

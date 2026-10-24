@@ -10,14 +10,20 @@ from aiogram.types import (
 
 from moydodyr.domain import MOSCOW
 
-MENU = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🧹 Услуги и цены"), KeyboardButton(text="🧮 Рассчитать стоимость")],
-        [KeyboardButton(text="📅 Оставить заявку"), KeyboardButton(text="🔥 Акции")],
-        [KeyboardButton(text="⭐ Отзывы"), KeyboardButton(text="📞 Связаться с менеджером")],
-        [KeyboardButton(text="❓ Частые вопросы")],
+MENU = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🧮 Рассчитать стоимость", callback_data="menu:estimate")],
+        [InlineKeyboardButton(text="📅 Оставить заявку", callback_data="menu:order")],
+        [
+            InlineKeyboardButton(text="🧹 Услуги и цены", callback_data="menu:services"),
+            InlineKeyboardButton(text="🔥 Акции", callback_data="menu:promotions"),
+        ],
+        [
+            InlineKeyboardButton(text="⭐ Отзывы", callback_data="menu:reviews"),
+            InlineKeyboardButton(text="❓ Частые вопросы", callback_data="menu:faq"),
+        ],
+        [InlineKeyboardButton(text="📞 Связаться с менеджером", callback_data="menu:contact")],
     ],
-    resize_keyboard=True,
 )
 
 
