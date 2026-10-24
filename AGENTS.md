@@ -14,6 +14,7 @@
 - `main.py` → `moydodyr/app.py`: запуск бота, подключение роутеров и фоновой доставки.
 - `moydodyr/bot/handlers/`: сценарии клиента и менеджеров; `customer.py` собирает клиентские роутеры. Сохранять fallback последним, чтобы он не перехватывал другие обработчики.
 - `moydodyr/bot/states.py`, `keyboards.py`, `formatting.py`: состояния диалога, кнопки и карточки заявок.
+- Клиентские экраны обновлять через `moydodyr/bot/services/screen.py`, сохраняя `_screen` при сбросе сценария через `clear_flow()`. Не включать служебное состояние экрана в данные заявки. Обработчик inline-выборов — `moydodyr/bot/handlers/screen.py`.
 - `moydodyr/domain.py`: валидация ввода, каталог и предварительная стоимость.
 - `moydodyr/db.py`, `schema.sql`: доступ к PostgreSQL, FSM, заявки, история и outbox.
 - `moydodyr/bot/services/outbox.py`, `moydodyr/integrations/n8n.py`: доставка уведомлений и лидов.

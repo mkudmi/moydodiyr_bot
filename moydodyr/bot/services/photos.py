@@ -3,6 +3,8 @@ import asyncio
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from moydodyr.bot.services.screen import show_screen
+
 PENDING_ALBUMS: dict[tuple[int, int, str], list[Message]] = {}
 
 
@@ -34,7 +36,7 @@ async def append_photos(messages: list[Message], state: FSMContext):
         note = f"Добавлено фото: {len(photos)}/5. Пришлите ещё или нажмите «Готово»."
         if len(incoming) > remaining:
             note = f"В заявке максимум 5 фото. Сохранено {len(photos)}. Нажмите «Готово»."
-        await messages[-1].answer(note)
+        await show_screen(messages[-1], state, note)
 
 
 async def flush_album(key: tuple[int, int, str], state: FSMContext):
@@ -59,7 +61,7 @@ async def append_photos_unlocked(messages: list[Message], state: FSMContext):
         note = f"В заявке максимум 5 фото. Сохранено {len(photos)}. Нажмите «Готово»."
     else:
         note = f"Добавлено {len(added)} фото ({len(photos)}/5). Нажмите «Готово», когда закончите."
-    await messages[-1].answer(note)
+    await show_screen(messages[-1], state, note)
 
 
 async def flush_user_albums(message: Message, state: FSMContext):

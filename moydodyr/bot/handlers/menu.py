@@ -9,7 +9,6 @@ from aiogram.types import (
     CallbackQuery,
     FSInputFile,
     Message,
-    ReplyKeyboardRemove,
 )
 from aiogram.utils.deep_linking import decode_payload
 
@@ -17,6 +16,13 @@ from moydodyr.bot.handlers.contact import contact_manager
 from moydodyr.bot.handlers.orders import begin_form
 from moydodyr.bot.keyboards import (
     MENU,
+)
+from moydodyr.bot.services.screen import (
+    bind_screen,
+    clear_flow,
+    pages_for,
+    remove_legacy_keyboard,
+    show_screen,
 )
 from moydodyr.db import Database
 
@@ -28,6 +34,7 @@ WELCOME_PHOTO = Path(__file__).resolve().parents[3] / "assets" / "welcome.png"
 
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext, db: Database):
+    await remove_legacy_keyboard(message, state)
     await state.clear()
     source = "Прямой переход"
     if message.text and len(message.text.split(maxsplit=1)) > 1:
@@ -41,38 +48,39 @@ async def start(message: Message, state: FSMContext, db: Database):
     await db.register_user(message.from_user.id, source)
     catalog = await db.catalog()
     welcome = catalog["welcome"]
-    await message.answer("🫧 Наведём порядок вместе!", reply_markup=ReplyKeyboardRemove())
-    if len(welcome.encode("utf-16-le")) // 2 <= 1024:
-        await message.answer_photo(FSInputFile(WELCOME_PHOTO), caption=welcome, reply_markup=MENU)
-    else:
-        # Admin-managed welcome texts allow 3000 characters; photo captions allow 1024.
-        await message.answer_photo(FSInputFile(WELCOME_PHOTO))
-        await message.answer(welcome, reply_markup=MENU)
+    sent = await message.answer_photo(
+        FSInputFile(WELCOME_PHOTO),
+        caption=pages_for(welcome, 1024)[0],
+        reply_markup=MENU,
+        parse_mode=None,
+    )
+    await bind_screen(sent, state)
+    await show_screen(message, state, welcome, reply_markup=MENU)
 
 
 @router.message(Command("cancel"))
 @router.message(F.text == "↩️ Отмена")
 async def cancel(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Действие отменено.", reply_markup=ReplyKeyboardRemove())
-    await message.answer("Выберите действие:", reply_markup=MENU)
+    await clear_flow(state)
+    await show_screen(message, state, "Действие отменено. Выберите действие:", reply_markup=MENU)
 
 
 @router.message(Command("menu"))
 async def menu(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("Возвращаемся в меню.", reply_markup=ReplyKeyboardRemove())
-    await message.answer("Главное меню:", reply_markup=MENU)
+    await clear_flow(state)
+    await show_screen(message, state, "Главное меню:", reply_markup=MENU)
 
 
 @router.message(F.text == "🧹 Услуги и цены")
-async def services(message: Message, db: Database):
+async def services(message: Message, db: Database, state: FSMContext):
     catalog = await db.catalog()
     lines = []
     for item in catalog["services"].values():
         if item.get("enabled"):
             lines.append(f"• {html.escape(item['title'])}")
-    await message.answer(
+    await show_screen(
+        message,
+        state,
         "Доступные услуги:\n"
         + ("\n".join(lines) or "Список уточните у менеджера.")
         + "\n\nСтоимость зависит от объекта, площади и объёма работ. Итог подтверждает менеджер.",
@@ -81,18 +89,18 @@ async def services(message: Message, db: Database):
 
 
 @router.message(F.text == "🔥 Акции")
-async def promotions(message: Message, db: Database):
-    await message.answer((await db.catalog())["promotions"], reply_markup=MENU)
+async def promotions(message: Message, db: Database, state: FSMContext):
+    await show_screen(message, state, (await db.catalog())["promotions"], reply_markup=MENU)
 
 
 @router.message(F.text == "⭐ Отзывы")
-async def reviews(message: Message, db: Database):
-    await message.answer((await db.catalog())["reviews"], reply_markup=MENU)
+async def reviews(message: Message, db: Database, state: FSMContext):
+    await show_screen(message, state, (await db.catalog())["reviews"], reply_markup=MENU)
 
 
 @router.message(F.text == "❓ Частые вопросы")
-async def faq(message: Message, db: Database):
-    await message.answer((await db.catalog())["faq"], reply_markup=MENU)
+async def faq(message: Message, db: Database, state: FSMContext):
+    await show_screen(message, state, (await db.catalog())["faq"], reply_markup=MENU)
 
 
 @router.callback_query(
@@ -105,19 +113,28 @@ async def faq(message: Message, db: Database):
             "menu:reviews",
             "menu:faq",
             "menu:contact",
+            "menu:home",
         }
     )
 )
 async def menu_action(query: CallbackQuery, state: FSMContext, db: Database):
-    await query.answer()
     if not isinstance(query.message, Message):
+        await query.answer()
         return
+    if not await bind_screen(query.message, state):
+        await query.answer("Это старое меню. Используйте последнее сообщение или /start.")
+        return
+    await query.answer()
     action = query.data.split(":", 1)[1]
     if action in {"estimate", "order"}:
         await begin_form(query.message, state, db, mode=action)
     elif action == "contact":
-        await state.clear()
+        await clear_flow(state)
         await contact_manager(query.message, state)
+    elif action == "home":
+        await clear_flow(state)
+        await show_screen(query.message, state, (await db.catalog())["welcome"], reply_markup=MENU)
     else:
         handlers = {"services": services, "promotions": promotions, "reviews": reviews, "faq": faq}
-        await handlers[action](query.message, db)
+        await clear_flow(state)
+        await handlers[action](query.message, db, state)

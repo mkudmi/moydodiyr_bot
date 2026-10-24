@@ -69,6 +69,7 @@ class Database:
         manager_chat: int,
         accepted: str,
         webhook_payload: dict | None = None,
+        receipt_screen: dict | None = None,
     ):
         async with self.pool.acquire() as conn, conn.transaction():
             source = await conn.fetchval("SELECT source FROM users WHERE id=$1", user_id)
@@ -108,7 +109,13 @@ class Database:
                 conn,
                 f"order:{order_id}:receipt",
                 user_id,
-                {"kind": "text", "text": f"Заявка №{order_id} принята!\n\n{accepted}"},
+                {
+                    "kind": "text",
+                    "text": f"Заявка №{order_id} принята!\n\n{accepted}",
+                    "screen": {key: receipt_screen[key] for key in ("message_id", "nonce")}
+                    if receipt_screen
+                    else None,
+                },
             )
             return inserted
 

@@ -4,11 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from aiogram.types import ReplyKeyboardRemove
 
 from moydodyr.bot.handlers.admin import admin_command
 from moydodyr.bot.handlers.menu import WELCOME_PHOTO, start
-from moydodyr.bot.keyboards import MENU
 from moydodyr.domain import validate_catalog
 
 
@@ -16,34 +14,28 @@ def load_catalog():
     return json.loads((WELCOME_PHOTO.parents[1] / "catalog.json").read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("welcome", [load_catalog()["welcome"], "Я" * 1025, "🫧" * 513])
-async def test_start_photo_and_long_welcome(welcome):
-    message = SimpleNamespace(
-        text="/start campaign",
-        from_user=SimpleNamespace(id=42),
-        answer=AsyncMock(),
-        answer_photo=AsyncMock(),
-    )
-    state = SimpleNamespace(clear=AsyncMock())
+@pytest.mark.parametrize(
+    "welcome", [load_catalog()["welcome"], "Я" * 1025, "🫧" * 513], ids=["default", "long", "emoji"]
+)
+async def test_start_photo_and_long_welcome(screen_env, welcome):
+    from aiogram.methods import SendMessage, SendPhoto
+
+    from moydodyr.bot.services.screen import SCREEN_KEY
+
+    _, session, state, message = screen_env
     db = SimpleNamespace(
         register_user=AsyncMock(), catalog=AsyncMock(return_value={"welcome": welcome})
     )
 
     await start(message, state, db)
 
-    state.clear.assert_awaited_once()
     db.register_user.assert_awaited_once_with(42, "campaign")
     assert WELCOME_PHOTO.is_file()
-    assert message.answer_photo.call_args.args[0].path == WELCOME_PHOTO
-    if len(welcome.encode("utf-16-le")) // 2 <= 1024:
-        assert message.answer_photo.call_args.kwargs == {"caption": welcome, "reply_markup": MENU}
-        message.answer.assert_awaited_once_with(
-            "🫧 Наведём порядок вместе!", reply_markup=ReplyKeyboardRemove()
-        )
-    else:
-        assert message.answer_photo.call_args.kwargs == {}
-        message.answer.assert_any_await(welcome, reply_markup=MENU)
-        assert message.answer.await_count == 2
+    assert sum(isinstance(call, SendPhoto) for call in session.calls) == 1
+    assert not any(isinstance(call, SendMessage) for call in session.calls)
+    screen = (await state.get_data())[SCREEN_KEY]
+    assert "".join(screen["pages"]) == welcome
+    assert all(len(page.encode("utf-16-le")) // 2 <= 1024 for page in screen["pages"])
 
 
 async def test_admin_updates_multiline_welcome_without_changing_catalog():

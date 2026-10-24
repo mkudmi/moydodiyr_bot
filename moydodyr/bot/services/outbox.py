@@ -1,17 +1,23 @@
 import asyncio
 import logging
+from contextlib import nullcontext
+from datetime import datetime, timezone
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.types import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from moydodyr.bot.formatting import order_text
 from moydodyr.bot.keyboards import MENU
+from moydodyr.bot.services.screen import SCREEN_KEY, show_screen
+from moydodyr.bot.states import Form
 from moydodyr.config import Settings
-from moydodyr.db import Database
+from moydodyr.db import Database, PostgresStorage
 from moydodyr.integrations.n8n import PermanentWebhookError, send_n8n_lead
 
 
-async def deliver_outbox(bot: Bot, db: Database, settings: Settings):
+async def deliver_outbox(bot: Bot, db: Database, settings: Settings, isolation=None):
     while True:
         row = await db.next_notification()
         if row is None:
@@ -37,10 +43,9 @@ async def deliver_outbox(bot: Bot, db: Database, settings: Settings):
             elif data["kind"] == "photo":
                 await bot.send_photo(row["chat_id"], data["photo"], caption=data["caption"])
             elif data["kind"] == "text":
-                await bot.send_message(
-                    row["chat_id"], data["text"], reply_markup=ReplyKeyboardRemove()
-                )
-                await bot.send_message(row["chat_id"], "Выберите действие:", reply_markup=MENU)
+                key = StorageKey(bot_id=bot.id, chat_id=row["chat_id"], user_id=row["chat_id"])
+                async with isolation.lock(key) if isolation else nullcontext():
+                    await deliver_receipt(bot, db, row["chat_id"], data)
             elif data["kind"] == "webhook":
                 if not settings.webhook_enabled:
                     raise PermanentWebhookError("n8n webhook is not configured")
@@ -67,3 +72,27 @@ async def deliver_outbox(bot: Bot, db: Database, settings: Settings):
             else:
                 await db.defer_notification(row["id"], safe_error)
                 logging.warning("Failed to deliver outbox item %s (%s)", row["id"], safe_error)
+
+
+async def deliver_receipt(bot: Bot, db: Database, chat_id: int, payload: dict):
+    target = payload.get("screen")
+    if target:
+        state = FSMContext(
+            storage=PostgresStorage(db),
+            key=StorageKey(bot_id=bot.id, chat_id=chat_id, user_id=chat_id),
+        )
+        current = (await state.get_data()).get(SCREEN_KEY, {})
+        if (
+            current.get("message_id") == target["message_id"]
+            and current.get("nonce") == target["nonce"]
+            and await state.get_state() in {None, Form.confirm.state}
+        ):
+            message = Message(
+                message_id=target["message_id"],
+                date=datetime.now(timezone.utc),
+                chat=Chat(id=chat_id, type="private"),
+            ).as_(bot)
+            await show_screen(message, state, payload["text"], reply_markup=MENU)
+            return
+    # A receipt arriving after a new flow must not overwrite the new draft's screen.
+    await bot.send_message(chat_id, payload["text"], reply_markup=MENU)

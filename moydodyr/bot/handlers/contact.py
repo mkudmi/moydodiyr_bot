@@ -7,12 +7,12 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
 )
 
 from moydodyr.bot.keyboards import (
     MENU,
 )
+from moydodyr.bot.services.screen import clear_flow, show_screen
 from moydodyr.bot.states import Form
 from moydodyr.config import Settings
 from moydodyr.db import Database
@@ -24,7 +24,9 @@ router.message.filter(F.chat.type == "private")
 @router.message(F.text == "📞 Связаться с менеджером")
 async def contact_manager(message: Message, state: FSMContext):
     await state.set_state(Form.manager_message)
-    await message.answer(
+    await show_screen(
+        message,
+        state,
         "Напишите сообщение менеджеру. Я передам его вместе с вашим контактом.",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[
@@ -39,7 +41,7 @@ async def contact_manager(message: Message, state: FSMContext):
 @router.message(Form.manager_message, F.contact)
 async def manager_contact_only(message: Message, state: FSMContext):
     await state.update_data(contact=message.contact.phone_number)
-    await message.answer("Теперь напишите сообщение менеджеру.")
+    await show_screen(message, state, "Теперь напишите сообщение менеджеру.")
 
 
 @router.message(Form.manager_message)
@@ -47,7 +49,7 @@ async def manager_message(message: Message, state: FSMContext, db: Database, set
     data = await state.get_data()
     text = (message.text or "").strip()
     if len(text) < 1 or len(text) > 3000:
-        await message.answer("Сообщение должно быть не длиннее 3000 символов.")
+        await show_screen(message, state, "Сообщение должно быть не длиннее 3000 символов.")
         return
     user = message.from_user
     source = await db.pool.fetchval("SELECT source FROM users WHERE id=$1", user.id)
@@ -81,9 +83,10 @@ async def manager_message(message: Message, state: FSMContext, db: Database, set
         manager_payload,
         webhook_lead,
     )
-    await state.clear()
-    await message.answer(
+    await clear_flow(state)
+    await show_screen(
+        message,
+        state,
         "Передал сообщение менеджеру. Он ответит вам напрямую в Telegram.",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=MENU,
     )
-    await message.answer("Выберите действие:", reply_markup=MENU)
