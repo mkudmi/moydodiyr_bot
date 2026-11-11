@@ -1,6 +1,5 @@
 import html
 import re
-from uuid import uuid4
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -8,10 +7,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from moydodyr.bot.formatting import ORDER_STATUSES, customer_order_text, display_date
-from moydodyr.bot.services.screen import SCREEN_KEY, bind_screen, clear_flow, show_screen
+from moydodyr.bot.services.screen import bind_screen, clear_flow, show_screen
 from moydodyr.config import Settings
 from moydodyr.db import Database
-from moydodyr.domain import cancellation_deadline, customer_can_cancel
 
 router = Router()
 router.message.filter(F.chat.type == "private")
@@ -53,7 +51,7 @@ async def show_customer_orders(
     if not rows:
         lines.append("Здесь пока нет заявок. Оформить новую можно в главном меню.")
     else:
-        lines += ["", "Выберите заявку, чтобы посмотреть подробности и доступные действия."]
+        lines += ["", "Выберите заявку, чтобы посмотреть статус и подробности."]
     navigation = []
     if page:
         navigation.append(button("← Предыдущие", f"client:list:{scope}:{page - 1}"))
@@ -90,15 +88,7 @@ async def show_customer_order(
     if notice:
         text = html.escape(notice) + "\n\n" + text
     keyboard = []
-    if customer_can_cancel(order):
-        deadline = cancellation_deadline(order["payload"])
-        text += f"\n\nОтмена доступна до {deadline:%d.%m.%Y %H:%M} (МСК)."
-        keyboard.append([button("Отменить заявку", f"client:cancel:{order_id}:{scope}:{page}")])
-    elif order["status"] != "cancelled":
-        text += (
-            "\n\nСамостоятельная отмена доступна минимум за 24 часа до уборки. "
-            "По другим вопросам свяжитесь с администратором."
-        )
+    text += "\n\nДля переноса или отмены обратитесь к менеджеру. Изменения выполняются в CRM."
     keyboard += [
         [button("Обновить", f"client:detail:{order_id}:{scope}:{page}")],
         [button("← К списку заявок", f"client:list:{scope}:{page}")],
@@ -148,51 +138,8 @@ async def customer_action(
     if action == "detail":
         await query.answer()
         await show_customer_order(query.message, state, db, user_id, order_id, scope, page)
-    elif action == "cancel":
-        if not customer_can_cancel(order):
-            await query.answer(
-                "Отмена недоступна: нужно минимум 24 часа до уборки.", show_alert=True
-            )
-            return
-        await query.answer()
-        token = uuid4().hex[:12]
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    button(
-                        "Да, отменить заявку", f"client:confirm:{order_id}:{scope}:{page}:{token}"
-                    )
-                ],
-                [button("Нет, оставить заявку", f"client:detail:{order_id}:{scope}:{page}")],
-            ]
-        )
-        await clear_flow(state)
-        await show_screen(
-            query.message,
-            state,
-            f"Отменить заявку №{order_id}?\n\n"
-            "Отмену нельзя будет вернуть. Вы сможете оформить новую заявку.",
-            reply_markup=keyboard,
-        )
-        screen = (await state.get_data())[SCREEN_KEY]
-        screen["cancel_confirmation"] = {"order_id": order_id, "token": token}
-        await state.update_data(**{SCREEN_KEY: screen})
     else:
-        screen = (await state.get_data()).get(SCREEN_KEY, {})
-        if not token or screen.get("cancel_confirmation") != {"order_id": order_id, "token": token}:
-            await query.answer("Откройте заявку и подтвердите отмену заново.", show_alert=True)
-            return
-        screen.pop("cancel_confirmation", None)
-        await state.update_data(**{SCREEN_KEY: screen})
-        await query.answer()
-        ok, notice = await db.cancel_customer_order(user_id, order_id, settings.manager_chat_id)
-        await show_customer_order(
-            query.message,
-            state,
-            db,
-            user_id,
-            order_id,
-            "h" if ok else scope,
-            0 if ok else page,
-            notice,
+        await query.answer(
+            "Для отмены или переноса обратитесь к менеджеру. Управление заявкой выполняется в CRM.",
+            show_alert=True,
         )

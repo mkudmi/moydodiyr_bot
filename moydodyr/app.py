@@ -6,9 +6,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import SimpleEventIsolation
 
-from moydodyr.bot.handlers.customer import router as customer_router
 from moydodyr.bot.handlers.group import group_router
-from moydodyr.bot.handlers.photos import photos_router
+from moydodyr.bot.handlers.miniapp_entry import router as miniapp_router
 from moydodyr.bot.services.outbox import deliver_outbox
 from moydodyr.bot.services.photo_archive import backfill_order_photos
 from moydodyr.config import Settings
@@ -26,8 +25,7 @@ async def run():
     isolation = SimpleEventIsolation()
     dp = Dispatcher(storage=PostgresStorage(db), events_isolation=isolation)
     dp.include_router(group_router)
-    dp.include_router(photos_router)
-    dp.include_router(customer_router)
+    dp.include_router(miniapp_router)
     try:
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(backfill_order_photos(bot, db))

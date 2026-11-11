@@ -86,3 +86,23 @@ FROM orders o CROSS JOIN LATERAL jsonb_array_elements_text(
 ) WITH ORDINALITY AS p(file_id,ordinality)
 WHERE p.ordinality <= 5
 ON CONFLICT DO NOTHING;
+
+-- Добавления к базе бота; исходные заявки и фотографии сохраняются.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS crm jsonb NOT NULL DEFAULT '{}';
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='orders'::regclass
+               AND conname='orders_status_check'
+               AND pg_get_constraintdef(oid) NOT LIKE '%completed%') THEN
+        ALTER TABLE orders DROP CONSTRAINT orders_status_check;
+        ALTER TABLE orders ADD CONSTRAINT orders_status_check
+            CHECK (status IN ('new','working','agreed','completed','cancelled'));
+    END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS crm_events (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    order_id bigint NOT NULL REFERENCES orders(id),
+    actor text NOT NULL,
+    changes jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS crm_events_order ON crm_events(order_id,id DESC);

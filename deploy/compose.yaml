@@ -1,0 +1,52 @@
+services:
+  database:
+    image: postgres:17-alpine
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: moydodyr
+      POSTGRES_DB: moydodyr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-p", "15432"]
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 15432 -U moydodyr -d moydodyr"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+  bot:
+    image: moydodyr-app:local
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    network_mode: host
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+  miniapp:
+    image: moydodyr-app:local
+    network_mode: host
+    env_file: .env
+    restart: unless-stopped
+    command: ["python", "-m", "moydodyr.miniapp.server"]
+    depends_on:
+      database:
+        condition: service_healthy
+  https:
+    image: caddy:2-alpine
+    network_mode: host
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - miniapp
+volumes:
+  database:
+  caddy_data:
+  caddy_config:

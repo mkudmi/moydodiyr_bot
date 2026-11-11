@@ -9,6 +9,7 @@ ORDER_STATUSES = {
     "working": "В работе",
     "agreed": "Согласована",
     "cancelled": "Отменена",
+    "completed": "Выполнена",
 }
 
 
@@ -35,7 +36,8 @@ def customer_order_text(order, catalog: dict, history) -> str:
         f"Объект: {obj}",
         f"Площадь: {str(payload.get('area', '—')).replace('.', ',')} м²",
         f"Адрес: {payload.get('address', '—')}",
-        f"Желаемая дата: {display_date(payload.get('date'))}, {payload.get('time', '—')}",
+        f"{'Подтверждённый выезд' if order.get('crm', {}).get('date') else 'Желаемая дата'}: "
+        f"{display_date(payload.get('date'))}, {payload.get('time', '—')}",
     ]
     extras = [catalog["extras"].get(key, {}).get("title", key) for key in payload.get("extras", [])]
     if extras:
@@ -45,6 +47,8 @@ def customer_order_text(order, catalog: dict, history) -> str:
         lines.append(f"Предварительно: {rubles(estimate['total'])} ₽")
     else:
         lines.append("Стоимость уточнит менеджер.")
+    if order.get("crm", {}).get("price") is not None:
+        lines.append(f"Согласовано: {rubles(order['crm']['price'])} ₽")
     if payload.get("comment"):
         lines.append(f"Комментарий: {payload['comment']}")
     lines += [
@@ -110,6 +114,7 @@ def order_text(order, catalog: dict) -> str:
         "working": "В работе",
         "agreed": "Согласована",
         "cancelled": "Отменена",
+        "completed": "Выполнена",
     }.get(order["status"], order["status"])
     obj = html.escape(catalog["objects"].get(payload.get("object"), payload.get("object", "—")))
     service = html.escape(catalog["services"].get(payload.get("service"), {}).get("title", "—"))

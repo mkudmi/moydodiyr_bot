@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from aiogram.methods import EditMessageCaption, SendMessage, SendPhoto
+from aiogram.methods import EditMessageCaption, SendMessage
 from aiogram.types import CallbackQuery, User
 
 from moydodyr.bot.handlers.account import customer_action, show_customer_orders
@@ -112,34 +112,20 @@ async def test_foreign_order_never_exposes_details_or_cancels(screen_env, action
     assert not any(isinstance(call, (EditMessageCaption, SendMessage)) for call in session.calls)
 
 
-async def test_cancellation_needs_confirmation_and_cannot_be_replayed(screen_env):
-    session, state, order, db, click = await setup_account(screen_env)
-    await click("client:confirm:7:a:0:000000000000")
+@pytest.mark.parametrize("callback", ["client:cancel:7:a:0", "client:confirm:7:a:0:000000000000"])
+async def test_old_cancel_buttons_redirect_to_crm_without_mutation(screen_env, callback):
+    session, _, order, db, click = await setup_account(screen_env)
+    await click(callback)
     db.cancel_customer_order.assert_not_awaited()
-    await click("client:cancel:7:a:0")
-    pending = (await state.get_data())[SCREEN_KEY]["cancel_confirmation"]
-
-    async def cancel(*args):
-        order["status"] = "cancelled"
-        return True, "Заявка отменена."
-
-    db.cancel_customer_order.side_effect = cancel
-    callback = f"client:confirm:7:a:0:{pending['token']}"
-    await click(callback)
-    db.cancel_customer_order.assert_awaited_once_with(42, 7, -123)
-    assert "Статус: Отменена" in session.calls[-1].caption
-    assert "Отменить заявку" not in str(session.calls[-1].reply_markup)
-    await click(callback)
-    assert db.cancel_customer_order.await_count == 1
-    assert not any(isinstance(call, (SendMessage, SendPhoto)) for call in session.calls)
+    assert order["status"] == "new"
+    assert "CRM" in session.calls[-1].text
 
 
-async def test_leaving_confirmation_invalidates_old_button(screen_env):
-    _, state, _, db, click = await setup_account(screen_env)
-    await click("client:cancel:7:a:0")
-    token = (await state.get_data())[SCREEN_KEY]["cancel_confirmation"]["token"]
+async def test_customer_account_is_read_only(screen_env):
+    session, _, _, db, click = await setup_account(screen_env)
     await click("client:detail:7:a:0")
-    await click(f"client:confirm:7:a:0:{token}")
+    assert "Отменить заявку" not in str(session.calls[-1].reply_markup)
+    assert "CRM" in session.calls[-1].caption
     db.cancel_customer_order.assert_not_awaited()
 
 

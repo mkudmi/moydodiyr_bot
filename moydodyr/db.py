@@ -100,6 +100,21 @@ class Database:
             content,
         )
 
+    async def draft_photos_exist(self, user_id: int, draft_id: str, file_ids: list[str]):
+        count = await self.pool.fetchval(
+            "SELECT count(*) FROM photo_files WHERE user_id=$1 AND draft_id=$2 "
+            "AND telegram_file_id=ANY($3::text[])",
+            user_id,
+            UUID(draft_id),
+            file_ids,
+        )
+        return count == len(file_ids)
+
+    async def archived_photo_for_delivery(self, file_id: str):
+        return await self.pool.fetchrow(
+            "SELECT content,content_type FROM photo_files WHERE telegram_file_id=$1", file_id
+        )
+
     async def customer_order_photos(self, user_id: int, order_id: int):
         return await self.pool.fetch(
             "SELECT p.position,p.telegram_file_id,p.photo_id,f.content_type,f.file_size,f.sha256,"
@@ -178,9 +193,14 @@ class Database:
                 draft,
             )
             if inserted is None:
-                return await conn.fetchrow(
-                    "SELECT * FROM orders WHERE draft_id=$1", UUID(draft["draft_id"])
+                existing = await conn.fetchrow(
+                    "SELECT * FROM orders WHERE draft_id=$1 AND user_id=$2",
+                    UUID(draft["draft_id"]),
+                    user_id,
                 )
+                if existing is None:
+                    raise ValueError("Draft belongs to another user")
+                return existing
             order_id = inserted["id"]
             attachments = []
             for position, file_id in enumerate(draft.get("photos", [])[:5]):
@@ -202,7 +222,7 @@ class Database:
                 attachment = {
                     "photo_id": str(photo["id"]) if photo else None,
                     "position": position,
-                    "file_id": file_id,
+                    "file_id": None if file_id.startswith("miniapp:") else file_id,
                 }
                 if photo:
                     attachment.update(

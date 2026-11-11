@@ -6,6 +6,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 from moydodyr.domain import MOSCOW
@@ -28,14 +29,14 @@ MENU = InlineKeyboardMarkup(
 )
 
 
-ADMIN_MENU = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="📬 Новые заявки"), KeyboardButton(text="⚙️ Настройки")],
-        [KeyboardButton(text="🛠 Заявки в работе")],
-        [KeyboardButton(text="ℹ️ Команды администратора")],
-    ],
-    resize_keyboard=True,
-)
+def mini_app_keyboard(url: str | None) -> InlineKeyboardMarkup | None:
+    if not url:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✨ Открыть приложение", web_app=WebAppInfo(url=url))]
+        ]
+    )
 
 
 def choices(items: dict, columns: int = 2) -> ReplyKeyboardMarkup:

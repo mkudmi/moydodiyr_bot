@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
-from aiogram.types import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, Chat, Message
 
 from moydodyr.bot.formatting import order_text
-from moydodyr.bot.keyboards import MENU
+from moydodyr.bot.keyboards import MENU, mini_app_keyboard
 from moydodyr.bot.services.screen import SCREEN_KEY, show_screen
 from moydodyr.bot.states import Form
 from moydodyr.config import Settings
@@ -28,29 +28,26 @@ async def deliver_outbox(bot: Bot, db: Database, settings: Settings, isolation=N
             if data["kind"] in {"order", "order_cancelled"}:
                 order = await db.order(data["order_id"])
                 catalog = await db.catalog()
-                markup = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="Взять в работу", callback_data=f"order:{order['id']}:take"
-                            )
-                        ]
-                    ]
-                )
-                if order["status"] != "new" or data["kind"] == "order_cancelled":
-                    markup = None
                 prefix = (
                     "❌ Клиент отменил заявку.\n\n" if data["kind"] == "order_cancelled" else ""
                 )
                 await bot.send_message(
-                    row["chat_id"], prefix + order_text(order, catalog), reply_markup=markup
+                    row["chat_id"], prefix + order_text(order, catalog), reply_markup=None
                 )
             elif data["kind"] == "photo":
-                await bot.send_photo(row["chat_id"], data["photo"], caption=data["caption"])
+                photo = data["photo"]
+                if photo.startswith("miniapp:"):
+                    archived = await db.archived_photo_for_delivery(photo)
+                    if not archived:
+                        raise ValueError("Archived photo is missing")
+                    photo = BufferedInputFile(archived["content"], filename="photo.jpg")
+                await bot.send_photo(row["chat_id"], photo, caption=data["caption"])
             elif data["kind"] == "text":
                 key = StorageKey(bot_id=bot.id, chat_id=row["chat_id"], user_id=row["chat_id"])
                 async with isolation.lock(key) if isolation else nullcontext():
-                    await deliver_receipt(bot, db, row["chat_id"], data)
+                    await deliver_receipt(
+                        bot, db, row["chat_id"], data, mini_app_keyboard(settings.mini_app_url)
+                    )
             elif data["kind"] == "webhook":
                 if not settings.webhook_enabled:
                     raise PermanentWebhookError("n8n webhook is not configured")
@@ -79,7 +76,7 @@ async def deliver_outbox(bot: Bot, db: Database, settings: Settings, isolation=N
                 logging.warning("Failed to deliver outbox item %s (%s)", row["id"], safe_error)
 
 
-async def deliver_receipt(bot: Bot, db: Database, chat_id: int, payload: dict):
+async def deliver_receipt(bot: Bot, db: Database, chat_id: int, payload: dict, keyboard=MENU):
     target = payload.get("screen")
     if target:
         state = FSMContext(
@@ -97,7 +94,7 @@ async def deliver_receipt(bot: Bot, db: Database, chat_id: int, payload: dict):
                 date=datetime.now(timezone.utc),
                 chat=Chat(id=chat_id, type="private"),
             ).as_(bot)
-            await show_screen(message, state, payload["text"], reply_markup=MENU)
+            await show_screen(message, state, payload["text"], reply_markup=keyboard)
             return
     # A receipt arriving after a new flow must not overwrite the new draft's screen.
-    await bot.send_message(chat_id, payload["text"], reply_markup=MENU)
+    await bot.send_message(chat_id, payload["text"], reply_markup=keyboard)
